@@ -1,0 +1,530 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@font-face { font-family: Anton; src: url(node_modules/@fontsource/anton/files/anton-latin-400-normal.woff2) format('woff2'); }
+@font-face { font-family: Mont; font-weight: 800; src: url(node_modules/@fontsource/montserrat/files/montserrat-latin-800-normal.woff2) format('woff2'); }
+html, body { margin: 0; background: #000; }
+canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script>
+const W = 1080, H = 1920;
+const C = document.getElementById('c');
+const ctx = C.getContext('2d');
+const GREEN = '#009C3B', YELLOW = '#FFDF00', BLUE = '#002776', WHITE = '#FFFFFF';
+const SKIN = '#C68B5E', SKIN_D = '#A26A43', SKIN_L = '#D9A27A', HAIR = '#1F130D';
+const INK = 'rgba(22,16,10,0.92)';
+let TL = null;
+
+// ---------- helpers ----------
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, k) => a + (b - a) * k;
+const smooth = k => { k = clamp(k); return k * k * (3 - 2 * k); };
+const easeOutCubic = k => 1 - Math.pow(1 - clamp(k), 3);
+const easeOutBack = k => { k = clamp(k); const c1 = 2.2, c3 = c1 + 1; return 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2); };
+const frac = x => x - Math.floor(x);
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+// ---------- Brazil flag (offscreen, built once) ----------
+const FW = 540, FH = 378, U = FW / 20;
+const flag = document.createElement('canvas');
+flag.width = FW; flag.height = FH;
+function buildFlag() {
+  const g = flag.getContext('2d');
+  g.fillStyle = GREEN; g.fillRect(0, 0, FW, FH);
+  g.fillStyle = YELLOW;
+  g.beginPath();
+  g.moveTo(1.7 * U, FH / 2); g.lineTo(FW / 2, 1.7 * U); g.lineTo(FW - 1.7 * U, FH / 2); g.lineTo(FW / 2, FH - 1.7 * U);
+  g.closePath(); g.fill();
+  const cx = FW / 2, cy = FH / 2, R = 3.5 * U;
+  g.fillStyle = BLUE; g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.fill();
+  g.save();
+  g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.clip();
+  // white band: arcs of radius 8M and 8.5M centred 2M left of the bottom of the vertical diameter
+  const bx = 8 * U, by = 14 * U;
+  g.fillStyle = WHITE;
+  g.beginPath(); g.arc(bx, by, 8.5 * U, 0, Math.PI * 2); g.arc(bx, by, 8 * U, 0, Math.PI * 2, true); g.fill();
+  // stars
+  const stars = [[-.55, .35, 2.6], [-.35, .55, 2.2], [-.15, .4, 3.2], [.05, .62, 2.6], [.02, .3, 2.4], [.22, .5, 2.2],
+    [.4, .3, 2.8], [.55, .45, 2.0], [.3, .7, 2.4], [-.45, .1, 2.0], [-.7, .15, 1.8], [.65, .2, 2.0], [-.1, .8, 2.2],
+    [.15, .82, 1.8], [-.3, .25, 1.8], [.48, .62, 1.8], [-.62, .5, 1.6], [.35, -.48, 3.0]];
+  for (const [sx, sy, r] of stars) star(g, cx + sx * R, cy + sy * R, r * 1.2);
+  // ORDEM E PROGRESSO along the band
+  g.fillStyle = GREEN; g.font = `800 ${Math.round(0.42 * U)}px Mont`; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const text = 'ORDEM E PROGRESSO', rad = 8.25 * U;
+  const thetaC = -Math.acos((cx - bx) / rad);
+  const widths = [...text].map(ch => g.measureText(ch).width + 1.2);
+  const total = widths.reduce((a, b) => a + b, 0);
+  let s = -total / 2;
+  [...text].forEach((ch, i) => {
+    const th = thetaC + (s + widths[i] / 2) / rad;
+    g.save(); g.translate(bx + rad * Math.cos(th), by + rad * Math.sin(th)); g.rotate(th + Math.PI / 2); g.fillText(ch, 0, 0); g.restore();
+    s += widths[i];
+  });
+  g.restore();
+}
+function star(g, x, y, r) {
+  g.fillStyle = WHITE; g.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.45 : r;
+    g.lineTo(x + rr * Math.cos(a), y + rr * Math.sin(a));
+  }
+  g.closePath(); g.fill();
+}
+
+// draws the flag waving; origin = top of the flag at the pole, +x away from the pole, +y down the pole
+function drawWavingFlag(t, intensity) {
+  const omega = 6.5 + 5 * intensity;
+  const step = 3;
+  for (let sx = 0; sx < FW; sx += step) {
+    const p = sx / FW;
+    const amp = (8 + 26 * intensity) * Math.pow(p, 0.85);
+    const ph = sx * 0.021 - t * omega;
+    const dy = amp * Math.sin(ph) + 18 * intensity * p * p;   // gravity droop at the free end
+    const dx = sx * (0.985 - 0.03 * intensity);
+    ctx.drawImage(flag, sx, 0, step, FH, dx, dy, step + 0.8, FH);
+    const light = Math.cos(ph) * Math.min(1, p * 3);
+    ctx.fillStyle = light > 0 ? `rgba(255,255,255,${light * 0.16})` : `rgba(0,0,0,${-light * 0.3})`;
+    ctx.fillRect(dx, dy, step + 0.8, FH);
+  }
+  // shadow next to the pole sleeve
+  const g = ctx.createLinearGradient(0, 0, 40, 0);
+  g.addColorStop(0, 'rgba(0,0,0,0.35)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 40, FH);
+}
+
+// ---------- background ----------
+const bokeh = (() => { const r = rng(7); return Array.from({ length: 46 }, () => ({ x: r() * W, y: r() * H, s: 40 + r() * 140, v: 30 + r() * 90, a: 0.06 + r() * 0.16, c: [YELLOW, WHITE, '#7CFFB2'][Math.floor(r() * 3)], ph: r() * 6.28 })); })();
+
+function drawBackground(t, post, energy) {
+  const g = ctx.createRadialGradient(560, 1100, 50, 560, 1100, 1350);
+  g.addColorStop(0, '#16c060'); g.addColorStop(0.45, '#007a35'); g.addColorStop(1, '#00230f');
+  ctx.fillStyle = g; ctx.fillRect(-200, -200, W + 400, H + 400);
+
+  // sun rays
+  const rot = t * 0.12 + Math.max(0, t - TL.slam) * 0.35;
+  ctx.save(); ctx.translate(560, 1160); ctx.rotate(rot);
+  const n = 20;
+  for (let i = 0; i < n; i++) {
+    const a0 = (i / n) * Math.PI * 2, a1 = a0 + Math.PI / n;
+    ctx.fillStyle = i % 2 ? `rgba(255,223,0,${0.07 + 0.08 * post + 0.05 * energy})` : 'rgba(255,255,255,0.025)';
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, 2400, a0, a1); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+
+  // giant rhombus + globe behind the person (flag motif), pulsing with the music
+  const pulse = 1 + 0.03 * energy + 0.04 * post;
+  ctx.save(); ctx.translate(560, 1220); ctx.scale(pulse, pulse);
+  ctx.globalAlpha = 0.22 + 0.12 * post;
+  ctx.fillStyle = YELLOW;
+  ctx.beginPath(); ctx.moveTo(-760, 0); ctx.lineTo(0, -560); ctx.lineTo(760, 0); ctx.lineTo(0, 560); ctx.closePath(); ctx.fill();
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = BLUE; ctx.beginPath(); ctx.arc(0, 0, 360, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1; ctx.restore();
+
+  // halo behind head
+  const hg = ctx.createRadialGradient(560, 1140, 0, 560, 1140, 520);
+  hg.addColorStop(0, `rgba(255,240,150,${0.45 + 0.25 * post})`); hg.addColorStop(1, 'rgba(255,240,150,0)');
+  ctx.fillStyle = hg; ctx.fillRect(0, 500, W, 1300);
+
+  // bokeh drifting up
+  for (const b of bokeh) {
+    const y = ((b.y - b.v * t * (1 + post)) % (H + 300) + H + 300) % (H + 300) - 150;
+    const x = b.x + 30 * Math.sin(t * 0.8 + b.ph);
+    const rg = ctx.createRadialGradient(x, y, 0, x, y, b.s);
+    rg.addColorStop(0, b.c); rg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.globalAlpha = b.a; ctx.fillStyle = rg;
+    ctx.beginPath(); ctx.arc(x, y, b.s, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------- person ----------
+function limb(points, width, color) {
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(points[0].x, points[0].y);
+  for (const p of points.slice(1)) ctx.lineTo(p.x, p.y);
+  ctx.strokeStyle = INK; ctx.lineWidth = width + 11; ctx.stroke();
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
+}
+
+function solveElbow(S, Hd, a, b, bend) {
+  let dx = Hd.x - S.x, dy = Hd.y - S.y, d = Math.hypot(dx, dy);
+  let Hc = Hd;
+  if (d > a + b - 1) { const k = (a + b - 1) / d; Hc = { x: S.x + dx * k, y: S.y + dy * k }; d = a + b - 1; }
+  const base = Math.atan2(dy, dx);
+  const ang = Math.acos(clamp((a * a + d * d - b * b) / (2 * a * d), -1, 1));
+  return { E: { x: S.x + a * Math.cos(base + bend * ang), y: S.y + a * Math.sin(base + bend * ang) }, H: Hc };
+}
+
+function drawArm(S, Hd, bend, hand, handAngle) {
+  const { E, H: Hh } = solveElbow(S, Hd, 210, 200, bend);
+  limb([S, E, Hh], 62, SKIN);
+  // sleeve
+  const sl = { x: lerp(S.x, E.x, 0.58), y: lerp(S.y, E.y, 0.58) };
+  limb([S, sl], 96, YELLOW);
+  ctx.strokeStyle = GREEN; ctx.lineWidth = 16; ctx.lineCap = 'butt';
+  const ang = Math.atan2(E.y - S.y, E.x - S.x), nx = -Math.sin(ang) * 50, ny = Math.cos(ang) * 50;
+  ctx.beginPath(); ctx.moveTo(sl.x + nx, sl.y + ny); ctx.lineTo(sl.x - nx, sl.y - ny); ctx.stroke();
+  // hand
+  const fa = handAngle ?? Math.atan2(Hh.y - E.y, Hh.x - E.x);
+  ctx.save(); ctx.translate(Hh.x, Hh.y); ctx.rotate(fa);
+  ctx.lineWidth = 7; ctx.strokeStyle = INK; ctx.fillStyle = SKIN;
+  if (hand === 'fist') {
+    ctx.beginPath(); ctx.roundRect(-30, -40, 72, 80, 26); ctx.fill(); ctx.stroke();
+    ctx.lineWidth = 5;
+    for (const y of [-14, 6, 24]) { ctx.beginPath(); ctx.moveTo(26, y); ctx.lineTo(42, y); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(-6, -40); ctx.quadraticCurveTo(18, -26, 34, -34); ctx.stroke(); // thumb
+  } else {
+    // open palm, fingers spread
+    for (let i = 0; i < 4; i++) {
+      const a = -0.42 + i * 0.28;
+      ctx.save(); ctx.rotate(a);
+      ctx.beginPath(); ctx.roundRect(20, -11, 62 - Math.abs(i - 1.5) * 8, 22, 11); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.save(); ctx.rotate(-1.3); ctx.beginPath(); ctx.roundRect(10, -11, 50, 22, 11); ctx.fill(); ctx.stroke(); ctx.restore();
+    ctx.beginPath(); ctx.ellipse(8, 0, 40, 38, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+  return Hh;
+}
+
+function drawHead(t, m, happyEyes, brow, tilt) {
+  ctx.save(); ctx.translate(0, -60); ctx.rotate(tilt); ctx.translate(0, 60);
+  // ears
+  for (const s of [-1, 1]) {
+    ctx.beginPath(); ctx.ellipse(s * 122, -185, 22, 34, 0, 0, Math.PI * 2);
+    ctx.fillStyle = SKIN_D; ctx.fill(); ctx.lineWidth = 7; ctx.strokeStyle = INK; ctx.stroke();
+  }
+  // skull + jaw (the jaw drops when the mouth opens)
+  const jawY = -135 + 16 * m, jawRy = 85 + 8 * m;
+  const shapes = () => { ctx.beginPath(); ctx.ellipse(0, -205, 122, 128, 0, 0, Math.PI * 2); ctx.ellipse(0, jawY, 108, jawRy, 0, 0, Math.PI * 2); };
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(0, -205, 127, 133, 0, 0, Math.PI * 2); ctx.ellipse(0, jawY, 113, jawRy + 5, 0, 0, Math.PI * 2);
+  ctx.fillStyle = INK; ctx.fill('nonzero');
+  const sg = ctx.createRadialGradient(-40, -230, 20, 0, -170, 190);
+  sg.addColorStop(0, SKIN_L); sg.addColorStop(0.6, SKIN); sg.addColorStop(1, SKIN_D);
+  shapes(); ctx.fillStyle = sg; ctx.fill('nonzero');
+  ctx.restore();
+  // hair
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(0, -205, 130, 136, 0, 0, Math.PI * 2); ctx.clip();
+  ctx.beginPath();
+  ctx.moveTo(-140, -165); ctx.quadraticCurveTo(-118, -250, -60, -262); ctx.quadraticCurveTo(0, -276, 60, -262);
+  ctx.quadraticCurveTo(118, -250, 140, -165); ctx.lineTo(140, -420); ctx.lineTo(-140, -420); ctx.closePath();
+  ctx.fillStyle = HAIR; ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = HAIR;
+  for (let a = 200; a <= 340; a += 17) {
+    const r = a * Math.PI / 180;
+    ctx.beginPath(); ctx.arc(118 * Math.cos(r), -205 + 128 * Math.sin(r), 30, 0, Math.PI * 2); ctx.fill();
+  }
+  // cheeks
+  for (const s of [-1, 1]) {
+    ctx.fillStyle = 'rgba(225,80,70,0.25)'; ctx.beginPath(); ctx.arc(s * 74, -132, 24, 0, Math.PI * 2); ctx.fill();
+  }
+  // eyes
+  const blink = [2.62, 7.35].some(b => Math.abs(t - b) < 0.06);
+  for (const s of [-1, 1]) {
+    const x = s * 46, y = -192;
+    if (happyEyes) {
+      ctx.strokeStyle = INK; ctx.lineWidth = 9; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(x, y + 10, 22, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+    } else if (blink) {
+      ctx.strokeStyle = INK; ctx.lineWidth = 8; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(x - 22, y); ctx.quadraticCurveTo(x, y + 8, x + 22, y); ctx.stroke();
+    } else {
+      ctx.fillStyle = WHITE; ctx.strokeStyle = INK; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.ellipse(x, y, 25, 29, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#3B2414'; ctx.beginPath(); ctx.arc(x + 2, y + 3, 15, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(x + 2, y + 3, 7.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = WHITE; ctx.beginPath(); ctx.arc(x - 3, y - 3, 5, 0, Math.PI * 2); ctx.fill();
+    }
+    // eyebrows (raised = excited)
+    ctx.strokeStyle = HAIR; ctx.lineWidth = 13; ctx.lineCap = 'round';
+    const by = -232 - brow;
+    ctx.beginPath(); ctx.moveTo(x - 26 * s, by + 2); ctx.quadraticCurveTo(x, by - 14, x + 28 * s, by + 8 - brow * 0.3); ctx.stroke();
+  }
+  // nose
+  ctx.strokeStyle = INK; ctx.lineWidth = 6; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-12, -150); ctx.quadraticCurveTo(0, -136, 13, -150); ctx.stroke();
+  // mouth
+  const y0 = -112, w = 56 + 18 * m, h = 10 + 60 * m;
+  if (m < 0.06) {
+    ctx.strokeStyle = INK; ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.moveTo(-w, y0); ctx.quadraticCurveTo(0, y0 + 36, w, y0); ctx.stroke();
+  } else {
+    const path = () => { ctx.beginPath(); ctx.moveTo(-w, y0); ctx.quadraticCurveTo(0, y0 + 10, w, y0); ctx.bezierCurveTo(w * 0.95, y0 + h * 1.33, -w * 0.95, y0 + h * 1.33, -w, y0); ctx.closePath(); };
+    path(); ctx.fillStyle = '#4A0D12'; ctx.fill();
+    ctx.save(); path(); ctx.clip();
+    ctx.fillStyle = WHITE; ctx.fillRect(-w, y0 - 4, 2 * w, 18);
+    ctx.fillStyle = '#E0566B'; ctx.beginPath(); ctx.ellipse(0, y0 + h * 1.08, w * 0.55, h * 0.42, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    path(); ctx.strokeStyle = INK; ctx.lineWidth = 7; ctx.lineJoin = 'round'; ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawTorso() {
+  const shirt = () => {
+    ctx.beginPath(); ctx.moveTo(-70, -8);
+    ctx.bezierCurveTo(-110, 10, -160, 30, -192, 72); ctx.lineTo(-222, 680); ctx.lineTo(222, 680); ctx.lineTo(192, 72);
+    ctx.bezierCurveTo(160, 30, 110, 10, 70, -8); ctx.closePath();
+  };
+  // neck
+  ctx.fillStyle = SKIN_D; ctx.strokeStyle = INK; ctx.lineWidth = 8;
+  ctx.beginPath(); ctx.roundRect(-50, -90, 100, 110, 20); ctx.fill(); ctx.stroke();
+  const g = ctx.createLinearGradient(-220, 0, 220, 0);
+  g.addColorStop(0, '#FFE94D'); g.addColorStop(0.55, YELLOW); g.addColorStop(1, '#E2B800');
+  shirt(); ctx.fillStyle = g; ctx.fill(); ctx.lineWidth = 9; ctx.strokeStyle = INK; ctx.stroke();
+  // side stripes
+  ctx.save(); shirt(); ctx.clip();
+  ctx.fillStyle = GREEN; ctx.fillRect(-222, 60, 26, 700); ctx.fillRect(196, 60, 26, 700);
+  ctx.restore();
+  // V neck
+  ctx.fillStyle = SKIN_D; ctx.beginPath(); ctx.moveTo(-62, -8); ctx.lineTo(0, 82); ctx.lineTo(62, -8); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = GREEN; ctx.lineWidth = 24; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(-74, -6); ctx.lineTo(0, 96); ctx.lineTo(74, -6); ctx.stroke();
+  // jersey number
+  ctx.font = '190px Anton'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.lineJoin = 'round'; ctx.lineWidth = 14; ctx.strokeStyle = WHITE; ctx.strokeText('22', 0, 270);
+  ctx.fillStyle = BLUE; ctx.fillText('22', 0, 270);
+}
+
+function mouthAt(f) {
+  const a = TL.mouth;
+  let v = a[f] || 0;
+  for (let k = 1; k <= 3; k++) v = Math.max(v, (a[f - k] || 0) * Math.pow(0.55, k));
+  return clamp(v);
+}
+
+function drawPerson(t, f, post) {
+  const bph = (t - TL.slam) / TL.beat;
+  const e = smooth((t - TL.slam) / 0.35);
+  const speech = mouthAt(f);
+  const cheer = t > TL.L1 + 1.7 ? 0.42 + 0.18 * Math.abs(Math.sin(Math.PI * bph)) : 0;
+  const m = Math.max(speech, cheer);
+  const bounce = -Math.abs(Math.sin(Math.PI * bph)) * lerp(8, 34, e);
+  const lean = lerp(0.015 * Math.sin(t * 2.2), 0.04 * Math.sin(Math.PI * bph), e);
+
+  ctx.save();
+  ctx.translate(560, 1385 + bounce);
+  ctx.rotate(lean);
+
+  // ----- pole + flag (behind the body) -----
+  const alpha = lerp(-0.08 + 0.07 * Math.sin(t * 2 * Math.PI / 1.3), -0.02 + 0.28 * Math.sin(Math.PI * bph), e);
+  const H1 = { x: -300 + 120 * alpha, y: -250 - 25 * e * Math.abs(Math.sin(Math.PI * bph)) };
+  const up = { x: Math.sin(alpha), y: -Math.cos(alpha) };
+  const top = { x: H1.x + up.x * 500, y: H1.y + up.y * 500 };
+  const bot = { x: H1.x - up.x * 150, y: H1.y - up.y * 150 };
+  ctx.save();
+  ctx.translate(top.x, top.y); ctx.rotate(alpha); ctx.translate(6, 16);
+  drawWavingFlag(t, lerp(0.35, 1, e));
+  ctx.restore();
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = INK; ctx.lineWidth = 22; ctx.beginPath(); ctx.moveTo(bot.x, bot.y); ctx.lineTo(top.x, top.y); ctx.stroke();
+  const pg = ctx.createLinearGradient(top.x - 8, 0, top.x + 8, 0);
+  pg.addColorStop(0, '#E9D9A6'); pg.addColorStop(1, '#9C7A3C');
+  ctx.strokeStyle = pg; ctx.lineWidth = 13; ctx.beginPath(); ctx.moveTo(bot.x, bot.y); ctx.lineTo(top.x, top.y); ctx.stroke();
+  ctx.fillStyle = '#F2C230'; ctx.strokeStyle = INK; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.arc(top.x, top.y - 6, 18, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+  // ----- body -----
+  drawTorso();
+  drawHead(t, m, post && (frac(t / 2.4) > 0.55), lerp(4 + 16 * speech, 18, e), lerp(0.04 * Math.sin(t * 3.1) * speech, -0.05 * Math.sin(Math.PI * bph), e));
+
+  // ----- free arm: gestures while talking, fist pump after the slam -----
+  const tl = TL;
+  let H2;
+  const talk1 = { x: 330 + 18 * Math.sin(t * 6), y: -10 - 110 * speech };
+  const pre = t < tl.L1 ? talk1 : { x: lerp(talk1.x, 255, smooth((t - tl.L1) / 0.5)), y: lerp(talk1.y, -170, smooth((t - tl.L1) / 0.5)) };
+  const pump = Math.exp(-frac(Math.max(0, bph)) * 4.5);
+  const fist = { x: 262, y: -215 - 125 * pump };
+  H2 = { x: lerp(pre.x, fist.x, e), y: lerp(pre.y, fist.y, e) };
+  drawArm({ x: 180, y: 78 }, H2, 1, post ? 'fist' : 'open', post ? -Math.PI / 2 : -Math.PI / 2 + 0.25 + 0.15 * Math.sin(t * 5));
+  // flag arm: hand grips the pole
+  drawArm({ x: -180, y: 78 }, H1, 1, 'fist', alpha - Math.PI / 2);
+  ctx.restore();
+}
+
+// ---------- text ----------
+function fitFont(text, size, maxW, family = 'Anton') {
+  ctx.font = `${size}px ${family}`;
+  const w = ctx.measureText(text).width;
+  if (w > maxW) { size = Math.floor(size * maxW / w); ctx.font = `${size}px ${family}`; }
+  return size;
+}
+function bigText(text, x, y, size, o) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(o.scale ?? 1, o.scale ?? 1); ctx.globalAlpha = o.alpha ?? 1;
+  fitFont(text, size, o.maxW ?? 980);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+  ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowOffsetY = 12; ctx.shadowBlur = 8;
+  if (o.outer) { ctx.strokeStyle = o.outer; ctx.lineWidth = o.outerW; ctx.strokeText(text, 0, 0); }
+  ctx.shadowColor = 'transparent';
+  if (o.stroke) { ctx.strokeStyle = o.stroke; ctx.lineWidth = o.strokeW; ctx.strokeText(text, 0, 0); }
+  ctx.fillStyle = o.fill; ctx.fillText(text, 0, 0);
+  ctx.restore();
+}
+const popIn = (t, t0, d = 0.3) => t < t0 ? 0 : easeOutBack((t - t0) / d);
+
+const t22 = document.createElement('canvas'); t22.width = 1080; t22.height = 640;
+function draw22(t, cx, cy) {
+  const k = (t - TL.slam);
+  if (k < 0) return;
+  const bph = k / TL.beat;
+  const s = lerp(3.2, 1, easeOutBack(k / 0.32)) * (1 + 0.05 * Math.exp(-frac(bph) * 5));
+  const g = t22.getContext('2d');
+  g.clearRect(0, 0, 1080, 640);
+  g.font = '430px Anton'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round';
+  g.strokeStyle = BLUE; g.lineWidth = 32; g.strokeText('22', 540, 330);
+  const fg = g.createLinearGradient(0, 150, 0, 510);
+  fg.addColorStop(0, '#FFF6A8'); fg.addColorStop(0.5, YELLOW); fg.addColorStop(1, '#F2B800');
+  g.fillStyle = fg; g.fillText('22', 540, 330);
+  // shine sweep (source-atop -> only over the glyphs)
+  g.save(); g.globalCompositeOperation = 'source-atop';
+  const sx = -300 + frac((k + 0.1) / 1.6) * 1700;
+  const sh = g.createLinearGradient(sx - 120, 0, sx + 120, 0);
+  sh.addColorStop(0, 'rgba(255,255,255,0)'); sh.addColorStop(0.5, 'rgba(255,255,255,0.7)'); sh.addColorStop(1, 'rgba(255,255,255,0)');
+  g.setTransform(1, 0, -0.35, 1, 0, 0);
+  g.fillStyle = sh; g.fillRect(sx - 140, 0, 280, 640);
+  g.restore();
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(s, s); ctx.globalAlpha = clamp(k / 0.12);
+  // white outline + golden glow
+  ctx.font = '430px Anton'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+  ctx.shadowColor = 'rgba(255,223,0,0.95)'; ctx.shadowBlur = 55;
+  ctx.strokeStyle = WHITE; ctx.lineWidth = 56; ctx.strokeText('22', 0, 10);
+  ctx.shadowColor = 'transparent';
+  ctx.drawImage(t22, -540, -320);
+  ctx.restore();
+}
+
+function drawTexts(t) {
+  const tl = TL;
+  // --- line 1 ---
+  const out1 = smooth((t - 3.15) / 0.3);
+  if (t < 3.5) {
+    const dy = -260 * out1, a = 1 - out1;
+    const s1 = popIn(t, tl.L0);
+    if (s1 > 0) bigText('HOJE É', 540, 175 + dy, 110, { fill: WHITE, stroke: GREEN, strokeW: 16, outer: '#00351A', outerW: 30, scale: s1, alpha: a });
+    const s2 = popIn(t, tl.L0 + 0.3);
+    if (s2 > 0) bigText('SEXTA-FEIRA', 540, 340 + dy, 190, { fill: YELLOW, stroke: GREEN, strokeW: 22, outer: '#00351A', outerW: 40, scale: s2, alpha: a });
+    const k3 = (t - (tl.L0 + 1.15)) / 0.35;
+    if (k3 > 0) {
+      const x = lerp(-700, 540, easeOutCubic(k3));
+      ctx.save(); ctx.globalAlpha = a; ctx.translate(x, 505 + dy); ctx.rotate(-0.03);
+      const size = fitFont('2 DE OUTUBRO', 100, 900);
+      const w = ctx.measureText('2 DE OUTUBRO').width + 90;
+      ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.roundRect(-w / 2 + 8, -size * 0.62 + 14, w, size * 1.24, 30); ctx.fill();
+      ctx.fillStyle = BLUE; ctx.strokeStyle = YELLOW; ctx.lineWidth = 10;
+      ctx.beginPath(); ctx.roundRect(-w / 2, -size * 0.62, w, size * 1.24, 30); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = WHITE; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('2 DE OUTUBRO', 0, 4);
+      ctx.restore();
+    }
+  }
+  // --- line 2 ---
+  const s4 = popIn(t, tl.L1);
+  if (s4 > 0) bigText('DOMINGO É', 540, 118, 112, { fill: WHITE, stroke: BLUE, strokeW: 18, outer: '#00351A', outerW: 34, scale: s4 });
+  draw22(t, 540, 455);
+}
+
+// ---------- confetti ----------
+const CONF = [GREEN, YELLOW, BLUE, WHITE, YELLOW];
+const burst = (() => { const r = rng(22); return Array.from({ length: 190 }, () => ({ vx: (r() - 0.5) * 2600, vy: -600 - r() * 1700, c: CONF[Math.floor(r() * CONF.length)], w: 14 + r() * 16, h: 8 + r() * 10, spin: 6 + r() * 14, ph: r() * 6.28, delay: r() * 0.08 })); })();
+const rain = (() => { const r = rng(5); return Array.from({ length: 120 }, () => ({ x: r() * W, t0: r() * 6, v: 260 + r() * 260, c: CONF[Math.floor(r() * CONF.length)], w: 12 + r() * 14, h: 7 + r() * 9, spin: 4 + r() * 10, ph: r() * 6.28, sway: 20 + r() * 50 })); })();
+function piece(x, y, w, h, rot, flip, c) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(1, Math.cos(flip));
+  ctx.fillStyle = c; ctx.fillRect(-w / 2, -h / 2, w, h); ctx.restore();
+}
+function drawConfetti(t) {
+  const k0 = t - TL.slam;
+  if (k0 < 0) return;
+  const g = 1500, drag = 2.2;
+  for (const p of burst) {
+    const k = k0 - p.delay; if (k < 0) continue;
+    const ek = (1 - Math.exp(-drag * k)) / drag;
+    const x = 540 + p.vx * ek;
+    const y = 455 + (p.vy + g / drag) * ek - g * k / drag;
+    if (y > H + 50) continue;
+    piece(x, y, p.w, p.h, p.ph + p.spin * k * 0.4, p.ph + p.spin * k, p.c);
+  }
+  for (const p of rain) {
+    const k = k0 - 0.4 - p.t0 * 0.5; if (k < 0) continue;
+    const y = -40 + p.v * k;
+    if (y > H + 40) continue;
+    piece(p.x + p.sway * Math.sin(k * 2 + p.ph), y, p.w, p.h, p.ph + k, p.ph + p.spin * k, p.c);
+  }
+}
+
+// ---------- overlays ----------
+function lowerThird(t) {
+  const k = (t - (TL.slam + 1.6)) / 0.4;
+  if (k <= 0) return;
+  const x = lerp(-1100, 0, easeOutCubic(k));
+  ctx.save(); ctx.translate(x, 0);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.moveTo(70, 1716); ctx.lineTo(1030, 1716); ctx.lineTo(1000, 1806); ctx.lineTo(40, 1806); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = GREEN; ctx.strokeStyle = YELLOW; ctx.lineWidth = 8;
+  ctx.beginPath(); ctx.moveTo(80, 1700); ctx.lineTo(1040, 1700); ctx.lineTo(1010, 1790); ctx.lineTo(50, 1790); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.font = '62px Anton'; ctx.fillStyle = WHITE; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('DOMINGO, 4 DE OUTUBRO', 545, 1748);
+  ctx.restore();
+}
+function aiLabel() {
+  const text = 'CONTEÚDO GERADO POR INTELIGÊNCIA ARTIFICIAL';
+  ctx.font = '800 25px Mont'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const w = ctx.measureText(text).width + 44;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.beginPath(); ctx.roundRect(540 - w / 2, 1844, w, 46, 23); ctx.fill();
+  ctx.fillStyle = WHITE; ctx.fillText(text, 540, 1868);
+}
+
+function render(f) {
+  const t = f / TL.fps;
+  const post = t >= TL.slam ? 1 : 0;
+  const energy = TL.music[f] || 0;
+  const k = t - TL.slam;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  let zoom = 1 + 0.14 * Math.pow(1 - clamp(t / 0.8), 3) + 0.03 * smooth((t - TL.L0) / 3.2) * (1 - post);
+  let shx = 0, shy = 0;
+  if (k >= 0) {
+    zoom += 0.09 * Math.exp(-k * 6);
+    const amp = 30 * Math.exp(-k * 5);
+    shx = amp * Math.sin(k * 71); shy = amp * Math.cos(k * 53);
+  }
+  ctx.save();
+  ctx.translate(W / 2 + shx, H / 2 + shy); ctx.scale(zoom, zoom); ctx.translate(-W / 2, -H / 2);
+  drawBackground(t, post, energy);
+  drawPerson(t, f, post);
+  drawTexts(t);
+  drawConfetti(t);
+  // shockwave ring
+  if (k >= 0 && k < 0.8) {
+    ctx.strokeStyle = `rgba(255,255,255,${0.8 * (1 - k / 0.8)})`; ctx.lineWidth = 30 * (1 - k / 0.8) + 4;
+    ctx.beginPath(); ctx.arc(540, 455, 120 + k * 1400, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.restore();
+  // vignette
+  const vg = ctx.createRadialGradient(540, 960, 500, 540, 960, 1250);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,10,4,0.55)');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  lowerThird(t);
+  aiLabel();
+  // flash on the slam
+  if (k >= 0 && k < 0.3) { ctx.fillStyle = `rgba(255,255,240,${0.85 * (1 - k / 0.3)})`; ctx.fillRect(0, 0, W, H); }
+}
+
+window.setup = async (tl) => {
+  TL = tl;
+  await Promise.all([document.fonts.load('100px Anton'), document.fonts.load('800 30px Mont')]);
+  buildFlag();
+  return true;
+};
+window.frame = (f) => { render(f); return C.toDataURL('image/png'); };
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+venv/
+node_modules/
+package-lock.json
+*.onnx
+*.bin
+*.wav
+timeline.json
+out.mp4
+prev_*.png
