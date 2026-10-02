@@ -461,14 +461,6 @@ function drawConfetti(t) {
 }
 
 // ---------- overlays ----------
-function aiLabel() {
-  const text = 'CONTEÚDO GERADO POR INTELIGÊNCIA ARTIFICIAL';
-  ctx.font = '800 25px Mont'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  const w = ctx.measureText(text).width + 44;
-  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.beginPath(); ctx.roundRect(540 - w / 2, 1844, w, 46, 23); ctx.fill();
-  ctx.fillStyle = WHITE; ctx.fillText(text, 540, 1868);
-}
-
 function render(f) {
   const t = f / TL.fps;
   const post = t >= TL.slam ? 1 : 0;
@@ -499,7 +491,6 @@ function render(f) {
   const vg = ctx.createRadialGradient(540, 960, 500, 540, 960, 1250);
   vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,10,4,0.55)');
   ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
-  aiLabel();
   // flash on the slam
   if (k >= 0 && k < 0.3) { ctx.fillStyle = `rgba(255,255,240,${0.85 * (1 - k / 0.3)})`; ctx.fillRect(0, 0, W, H); }
 }

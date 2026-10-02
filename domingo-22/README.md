@@ -6,9 +6,6 @@ um personagem animado segurando a bandeira diz *"Hoje é sexta-feira, 2 de outub
 - `domingo-22.mp4`: vídeo final
 - `capa.jpg`: imagem de capa (quadro aos 7 s)
 
-O vídeo traz o selo **"Conteúdo gerado por inteligência artificial"**, como pede a
-Resolução TSE nº 23.732/2024 para propaganda eleitoral feita com IA.
-
 ## Como regenerar
 
 Tudo é gerado localmente: animação em canvas, voz sintética
