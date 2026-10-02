@@ -307,7 +307,7 @@ function drawPerson(t, f, post) {
   const bph = (t - TL.slam) / TL.beat;
   const e = smooth((t - TL.slam) / 0.35);
   const speech = mouthAt(f);
-  const cheer = t > TL.L1 + 1.7 ? 0.42 + 0.18 * Math.abs(Math.sin(Math.PI * bph)) : 0;
+  const cheer = t > TL.voiceEnd + 0.05 ? 0.42 + 0.18 * Math.abs(Math.sin(Math.PI * bph)) : 0;
   const m = Math.max(speech, cheer);
   const bounce = -Math.abs(Math.sin(Math.PI * bph)) * lerp(8, 34, e);
   const lean = lerp(0.015 * Math.sin(t * 2.2), 0.04 * Math.sin(Math.PI * bph), e);
@@ -406,14 +406,14 @@ function draw22(t, cx, cy) {
 function drawTexts(t) {
   const tl = TL;
   // --- line 1 ---
-  const out1 = smooth((t - 3.15) / 0.3);
+  const out1 = smooth((t - (tl.L1 - 0.35)) / 0.3);
   if (t < 3.5) {
     const dy = -260 * out1, a = 1 - out1;
     const s1 = popIn(t, tl.L0);
     if (s1 > 0) bigText('HOJE É', 540, 175 + dy, 110, { fill: WHITE, stroke: GREEN, strokeW: 16, outer: '#00351A', outerW: 30, scale: s1, alpha: a });
-    const s2 = popIn(t, tl.L0 + 0.3);
+    const s2 = popIn(t, tl.cues.sexta);
     if (s2 > 0) bigText('SEXTA-FEIRA', 540, 340 + dy, 190, { fill: YELLOW, stroke: GREEN, strokeW: 22, outer: '#00351A', outerW: 40, scale: s2, alpha: a });
-    const k3 = (t - (tl.L0 + 1.15)) / 0.35;
+    const k3 = (t - tl.cues.outubro) / 0.35;
     if (k3 > 0) {
       const x = lerp(-700, 540, easeOutCubic(k3));
       ctx.save(); ctx.globalAlpha = a; ctx.translate(x, 505 + dy); ctx.rotate(-0.03);

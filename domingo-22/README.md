@@ -9,14 +9,16 @@ um personagem animado segurando a bandeira diz *"Hoje é sexta-feira, 2 de outub
 ## Como regenerar
 
 Tudo é gerado localmente: animação em canvas, voz sintética
-[Kokoro](https://github.com/thewh1teagle/kokoro-onnx) em pt-BR e trilha de samba sintetizada.
+[Kokoro](https://github.com/thewh1teagle/kokoro-onnx) em pt-BR (voz `pm_alex` com o tom
+abaixado para soar mais adulta) e trilha de forró sintetizada no ritmo de baião
+(sanfona, zabumba e triângulo).
 
 ```bash
 cd src
 python3 -m venv venv && ./venv/bin/pip install kokoro-onnx soundfile numpy scipy
 curl -LO https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
 curl -LO https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
-./venv/bin/python voice.py     # line0.wav, line1.wav
+./venv/bin/python voice.py     # line0.wav, line1.wav (usa ffmpeg com rubberband)
 ./venv/bin/python audio.py     # audio.wav + timeline.json (sincronia da boca)
 npm install && node render.js  # out.mp4 (precisa de Chromium e ffmpeg)
 ```
